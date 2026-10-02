@@ -23,6 +23,40 @@ cp config/scope.example.yaml scope.yaml   # edit domain/include/exclude/modules
 ./recon.sh --scope-file scope.yaml
 ```
 
+### IP targets
+
+Target type is always an explicit choice - never guessed from the
+string. Pass `--ip` instead of a domain to scope a run to exactly one
+IPv4/IPv6 address:
+
+```bash
+./recon.sh --ip 203.0.113.10 --authorized "Jane Doe, signed ROE 2026-01-01"
+# or: cp config/scope.example-ip.yaml scope.yaml  (edit ip/engagement) && ./recon.sh --scope-file scope.yaml
+```
+
+In this mode:
+- the scope matches **exactly that address** - no CIDR range, no other
+  IP, no hostname that merely resolves to it (`scope.py`'s
+  `_is_exact_ip_match` compares normalized `ipaddress` objects, so it
+  can't be tricked by alternate textual forms, and a CIDR string fails
+  to parse as a single address at all);
+- `passive` (crt.sh), `subdomain_discovery` (subfinder/amass) and the
+  DNS-wildcard check inside `dns_validate` are domain-only techniques
+  and are hard-skipped (`status=not_run`), regardless of what
+  `modules:` says in a scope file;
+- `http_map`/`crawl`/`content_discovery`/`vuln_scan` target the IP
+  directly; any redirect, CNAME, or discovered link that leaves that
+  single address (e.g. a login flow bouncing to an SSO provider) is
+  recorded in `third_party_observations` and is never itself probed,
+  crawled or fuzzed - this falls out of the same scope-engine check
+  every other stage already uses, not a special case;
+- a target passed as `--domain`/`domain:` that is IP-shaped is
+  rejected with a message to use `--ip` instead, and a `scope.yaml`
+  that sets both `domain:`/`ip:` for the wrong `target_type` (or omits
+  the one it needs) is rejected rather than guessed at;
+- `recon.db`'s `runs` table records `target_type` explicitly, and the
+  output directory/report are named/labelled by the IP.
+
 Output lands under `recon/<domain>/`: `assets/`, `endpoints/`,
 `findings/`, `evidence/`, `raw/<run-id>/` (every tool's untouched
 output), `recon.db`, and `report.html`.
@@ -41,9 +75,9 @@ CONFIRMED_FINDING` except this command.
 
 | Stage | Tool(s) | Class | Default |
 |---|---|---|---|
-| passive | crt.sh | PASSIVE | on |
-| subdomains | subfinder, amass `-passive` | PASSIVE | on |
-| dns_validate | dnsx (or `dig` fallback) + wildcard probe | PASSIVE | on |
+| passive | crt.sh | PASSIVE | on (domain only - `not_run` for `--ip`) |
+| subdomains | subfinder, amass `-passive` | PASSIVE | on (domain only - `not_run` for `--ip`) |
+| dns_validate | dnsx (or `dig` fallback) + wildcard probe | PASSIVE | on (domain only - `not_run` for `--ip`) |
 | http_map | httpx (or `curl` fallback) | SAFE_ACTIVE | on |
 | port_scan | naabu, ~60 common ports | OPTIONAL_ACTIVE | **off** |
 | historical | gau / waybackurls + bounded liveness check | PASSIVE + SAFE_ACTIVE | on |

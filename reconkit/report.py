@@ -175,30 +175,41 @@ def render(run_id: str, scope, db_path: str, out_path: str) -> str:
               html.escape(t["note"] or "")] for t in tp_rows],
         )
 
-        wc_row = conn.execute(
-            "SELECT * FROM wildcard_dns WHERE run_id=? AND base_label=?", (run_id, scope.domain)
-        ).fetchone()
-        wc_note = ""
-        if wc_row and wc_row["is_wildcard"]:
-            wc_note = (
-                '<div class="note"><strong>Wildcard DNS detected</strong> under '
-                f'{html.escape(scope.domain)}. DNS-only "resolved" candidates are capped at LOW '
-                "confidence and classified OBSERVATION rather than ASSET; see Asset Inventory below."
-                "</div>"
+        scope_note = ""
+        if scope.target_type == "ip":
+            scope_note = (
+                '<div class="note"><strong>Single-IP scope.</strong> This run\'s scope is exactly '
+                f'one address: <code>{html.escape(scope.domain)}</code> — no CIDR range, no other '
+                "address, and no hostname that merely resolves to it. Certificate Transparency "
+                "lookup, subdomain enumeration, and DNS wildcard detection are domain-only "
+                "techniques and were not run (see Pipeline execution below).</div>"
             )
+        else:
+            wc_row = conn.execute(
+                "SELECT * FROM wildcard_dns WHERE run_id=? AND base_label=?", (run_id, scope.domain)
+            ).fetchone()
+            if wc_row and wc_row["is_wildcard"]:
+                scope_note = (
+                    '<div class="note"><strong>Wildcard DNS detected</strong> under '
+                    f'{html.escape(scope.domain)}. DNS-only "resolved" candidates are capped at LOW '
+                    "confidence and classified OBSERVATION rather than ASSET; see Asset Inventory "
+                    "below.</div>"
+                )
 
         domain_esc = html.escape(scope.domain)
+        target_label = "IP address" if scope.target_type == "ip" else "Domain"
         page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Attack surface recon — {domain_esc}</title><style>{CSS}</style></head>
 <body>
 <h1>Prioritized attack-surface report</h1>
-<p><strong>Domain:</strong> {domain_esc} &nbsp; <strong>Run:</strong> {html.escape(run_id)} UTC</p>
+<p><strong>{target_label}:</strong> {domain_esc} &nbsp; <strong>Target type:</strong>
+{html.escape(scope.target_type)} &nbsp; <strong>Run:</strong> {html.escape(run_id)} UTC</p>
 <p><small>Evidence-driven: every row below traces back to raw tool output under
 <code>raw/{html.escape(run_id)}/</code>. A LEAD or VULNERABILITY_CANDIDATE is not a confirmed
 vulnerability until a human reviews the evidence and runs <code>recon.sh --confirm</code>.</small></p>
-{wc_note}
+{scope_note}
 
 <h2>Pipeline execution (tool-level status)</h2>
 {tool_table}

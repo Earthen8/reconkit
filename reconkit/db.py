@@ -21,9 +21,16 @@ SCHEMA = """
 PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;
 
+-- `domain` holds the target identifier regardless of target_type: an
+-- apex domain name, or (when target_type='ip') the exact, normalized IP
+-- address string. It is reused as the scope key across host_catalog /
+-- scope_rules / service_catalog / tech_catalog / endpoint_catalog below
+-- so a run's identity is the same single string whichever target type
+-- it is; target_type makes that explicit instead of leaving it implicit.
 CREATE TABLE IF NOT EXISTS runs (
     run_id TEXT PRIMARY KEY,
     domain TEXT NOT NULL,
+    target_type TEXT NOT NULL DEFAULT 'domain', -- 'domain' | 'ip'
     started_at TEXT NOT NULL,
     finished_at TEXT,
     config_json TEXT NOT NULL,
@@ -246,10 +253,20 @@ def connect(db_path: str) -> sqlite3.Connection:
     return conn
 
 
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Lightweight forward-only migration for columns added after a
+    recon.db already existed. CREATE TABLE IF NOT EXISTS alone can't add
+    a column to a table that was created by an older schema version."""
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(runs)")}
+    if "target_type" not in cols:
+        conn.execute("ALTER TABLE runs ADD COLUMN target_type TEXT NOT NULL DEFAULT 'domain'")
+
+
 def init_db(db_path: str) -> None:
     conn = connect(db_path)
     try:
         conn.executescript(SCHEMA)
+        _migrate(conn)
         conn.commit()
     finally:
         conn.close()

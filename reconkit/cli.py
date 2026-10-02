@@ -19,10 +19,14 @@ from . import (confidence, content_discovery, correlate, crawl, db, dns_validate
 
 
 def _add_scope_args(p: argparse.ArgumentParser) -> None:
+    # Target type is always an explicit choice - never inferred from the
+    # string's shape. Exactly one of these three selects both the target
+    # and how it's validated/matched downstream.
     g = p.add_mutually_exclusive_group(required=True)
-    g.add_argument("--domain")
+    g.add_argument("--domain", help="Hostname target, e.g. example.com")
+    g.add_argument("--ip", help="Bare IPv4/IPv6 address target, e.g. 203.0.113.10 (no CIDR)")
     g.add_argument("--scope-file")
-    p.add_argument("--authorized", default=None, help="Free-text authorization note (simple-domain mode)")
+    p.add_argument("--authorized", default=None, help="Free-text authorization note (simple-target mode)")
     p.add_argument("--enable-portscan", action="store_true")
     p.add_argument("--enable-content-discovery", action="store_true")
     p.add_argument("--enable-vuln-scan", action="store_true")
@@ -31,8 +35,25 @@ def _add_scope_args(p: argparse.ArgumentParser) -> None:
 
 def _build_scope(args) -> scope_mod.Scope:
     if args.scope_file:
-        sc = scope_mod.from_yaml_file(args.scope_file)
+        try:
+            sc = scope_mod.from_yaml_file(args.scope_file)
+        except RuntimeError as exc:
+            print(f"Scope file error: {exc}", file=sys.stderr)
+            sys.exit(2)
+    elif getattr(args, "ip", None):
+        if not scope_mod.valid_ip(args.ip):
+            print(f"Invalid IP address: {args.ip} (bare IPv4/IPv6 only - no CIDR, no hostname).",
+                  file=sys.stderr)
+            sys.exit(2)
+        sc = scope_mod.from_simple_ip(
+            args.ip, args.authorized, args.enable_portscan,
+            args.enable_content_discovery, args.enable_vuln_scan, args.max_hosts,
+        )
     else:
+        if scope_mod.valid_ip(args.domain):
+            print(f"'{args.domain}' is an IP address - use --ip, not --domain. Target type is "
+                  f"always explicit and is never guessed from the string's shape.", file=sys.stderr)
+            sys.exit(2)
         if not scope_mod.valid_domain(args.domain):
             print(f"Invalid domain: {args.domain}", file=sys.stderr)
             sys.exit(2)
@@ -40,9 +61,15 @@ def _build_scope(args) -> scope_mod.Scope:
             args.domain, args.authorized, args.enable_portscan,
             args.enable_content_discovery, args.enable_vuln_scan, args.max_hosts,
         )
-    if not scope_mod.valid_domain(sc.domain):
-        print(f"Invalid domain in scope: {sc.domain!r}", file=sys.stderr)
-        sys.exit(2)
+
+    if sc.target_type == "ip":
+        if not scope_mod.valid_ip(sc.domain):
+            print(f"Invalid IP in resolved scope: {sc.domain!r}", file=sys.stderr)
+            sys.exit(2)
+    else:
+        if not scope_mod.valid_domain(sc.domain):
+            print(f"Invalid domain in scope: {sc.domain!r}", file=sys.stderr)
+            sys.exit(2)
     return sc
 
 
@@ -82,7 +109,8 @@ def cmd_check_deps(args) -> None:
 def cmd_scope_check(args) -> None:
     sc = _build_scope(args)
     print(json.dumps({
-        "domain": sc.domain, "include": sc.include, "exclude": sc.exclude,
+        "domain": sc.domain, "target_type": sc.target_type,
+        "include": sc.include, "exclude": sc.exclude,
         "authorized": sc.is_authorized, "authorized_by": sc.authorized_by,
         "modules": sc.modules, "rate_limits": sc.rate_limits, "limits": sc.limits,
     }, indent=2))
@@ -97,9 +125,9 @@ def cmd_new_run(args) -> None:
     db.init_db(args.db_path)
     with db.cursor(args.db_path) as conn:
         conn.execute(
-            "INSERT OR REPLACE INTO runs(run_id, domain, started_at, finished_at, config_json, "
-            "authorized_by, authorization_reference) VALUES (?,?,?,?,?,?,?)",
-            (args.run_id, sc.domain, util.utc_now_iso(), None,
+            "INSERT OR REPLACE INTO runs(run_id, domain, target_type, started_at, finished_at, "
+            "config_json, authorized_by, authorization_reference) VALUES (?,?,?,?,?,?,?,?)",
+            (args.run_id, sc.domain, sc.target_type, util.utc_now_iso(), None,
              json.dumps({"modules": sc.modules, "rate_limits": sc.rate_limits, "limits": sc.limits}),
              sc.authorized_by, sc.authorization_reference),
         )
@@ -175,6 +203,10 @@ def cmd_port_scan(args) -> None:
             "SELECT DISTINCT hostname FROM dns_records WHERE run_id=?", (args.run_id,)
         ).fetchall()
         hosts = [r["hostname"] for r in rows]
+        if not hosts:
+            # dns_validate found nothing, wasn't run, or (IP mode) is always
+            # skipped - fall back to the target itself, same as http_map.
+            hosts = [sc.domain]
         out = port_scan.run(args.run_id, args.raw_dir, sc, conn, hosts)
     print(json.dumps(out, default=str))
 

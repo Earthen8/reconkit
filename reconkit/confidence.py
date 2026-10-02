@@ -81,7 +81,10 @@ def score_assets(run_id: str, scope, conn) -> int:
         sources = _host_sources(conn, run_id, hostname)
         if "input" in sources:
             classification, confidence = "ASSET", "CONFIRMED"
-            reason = "Operator-supplied apex domain; identity is given, not inferred."
+            if scope.target_type == "ip":
+                reason = "Operator-supplied target IP address; identity is given, not inferred."
+            else:
+                reason = "Operator-supplied apex domain; identity is given, not inferred."
         elif "dns" in sources and "http" in sources:
             classification, confidence = "ASSET", "HIGH"
             reason = "Independently corroborated: resolves via DNS and answers an HTTP(S) request."

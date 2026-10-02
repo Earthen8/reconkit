@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import ipaddress
 import json
 import os
 import random
@@ -42,6 +43,19 @@ def safe_filename(name: str, max_len: int = 180) -> str:
 
 def which(tool: str) -> Optional[str]:
     return shutil.which(tool)
+
+
+def format_host_for_url(host: str) -> str:
+    """Wrap a bare IPv6 literal in brackets for use inside a URL string
+    (https://[2001:db8::1]/); every other value (hostname, IPv4) is
+    returned unchanged. Needed wherever this codebase builds a URL
+    string itself instead of handing a tool a bare host to format."""
+    try:
+        if ipaddress.ip_address(host).version == 6:
+            return f"[{host}]"
+    except ValueError:
+        pass
+    return host
 
 
 @dataclass

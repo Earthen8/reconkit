@@ -71,6 +71,16 @@ def _file_has_content(path: str) -> bool:
 
 def run(run_id: str, raw_dir: str, scope, conn, timeout_subfinder: float = 120.0,
         timeout_amass: float = 180.0) -> dict:
+    if scope.target_type == "ip":
+        # subfinder/amass enumerate subdomains of a *name* - meaningless for
+        # a bare IP target. Neither tool is invoked in this mode.
+        for tool in ("subfinder", "amass"):
+            db.record_tool_run(conn, run_id, STAGE, tool, CLASSIFICATION, util.utc_now_iso(),
+                                util.utc_now_iso(), 0, "not_run",
+                                "target is an IP address; subdomain enumeration is domain-only "
+                                "and was not run")
+        return {"candidates": []}
+
     all_names: set = set()
 
     for tool, runner, timeout in (

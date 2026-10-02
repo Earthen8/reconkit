@@ -63,7 +63,7 @@ def _curl_fallback(hosts: list, raw_dir: str, timeout_per_host: float, rps: floa
     for host in hosts:
         for scheme in ("https", "http"):
             limiter.wait()
-            url = f"{scheme}://{host}/"
+            url = f"{scheme}://{util.format_host_for_url(host)}/"
             result = util.run_cmd(
                 [curl, "-sS", "-m", str(int(timeout_per_host)), "-D", "-", "-o", "/tmp/_body",
                  "-w", "\n__STATUS__:%{http_code}\n__FINAL_URL__:%{url_effective}\n",

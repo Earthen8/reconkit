@@ -3,9 +3,18 @@
 #
 #   ./recon.sh example.com
 #   ./recon.sh example.com --authorized "Jane Doe, signed ROE 2026-01-01" --enable-vuln-scan
+#   ./recon.sh --ip 203.0.113.10 --authorized "Jane Doe, signed ROE 2026-01-01"
 #   ./recon.sh --scope-file config/scope.yaml
 #   ./recon.sh --check
 #   ./recon.sh --confirm 42 --by "jane.doe" --note "manually verified, see evidence/lead-42.png"
+#
+# Target type (hostname vs. bare IP) is always an explicit choice - the
+# <domain> positional and --ip are mutually exclusive, and nothing here
+# ever guesses which one a string "looks like". In --ip mode the scope
+# is exactly that one address (no CIDR, no other IP); CT-log lookup,
+# subdomain enumeration and DNS wildcard detection are domain-only
+# techniques and are skipped entirely - see reconkit/passive.py,
+# reconkit/subdomains.py and reconkit/dns_validate.py.
 #
 # Bash's only jobs here are: parse args, create the run's directory
 # layout, and call one `python3 -m reconkit.cli <stage>` per pipeline
@@ -27,6 +36,7 @@ PY="python3 -m reconkit.cli"
 STAGE_TIMEOUT_S="${STAGE_TIMEOUT_S:-900}"   # circuit breaker per stage, independent of each tool's own timeout
 
 DOMAIN=""
+IP_TARGET=""
 SCOPE_FILE=""
 OUTPUT_ROOT="recon"
 AUTHORIZED=""
@@ -45,20 +55,31 @@ usage() {
 Usage:
   recon.sh <domain> [--authorized "text"] [--output-root DIR] [--max-hosts N]
            [--enable-portscan] [--enable-content-discovery] [--enable-vuln-scan]
+  recon.sh --ip <address> [--authorized "text"] [--output-root DIR]
+           [--enable-portscan] [--enable-content-discovery] [--enable-vuln-scan]
   recon.sh --scope-file config/scope.yaml [--output-root DIR]
   recon.sh --check
   recon.sh --confirm <lead-id> --by "name" --note "evidence summary"
 
-See config/scope.example.yaml for the full set of options the scope file
-accepts (per-module toggles, rate limits, include/exclude patterns,
-authorization fields). SAFE_ACTIVE and OPTIONAL_ACTIVE stages refuse to
-run without authorization - pass --authorized on the simple path, or
+Exactly one of: <domain>, --ip, or --scope-file. Target type is never
+guessed from the string - an IPv4/IPv6-looking value passed as <domain>
+is rejected with a message telling you to use --ip instead. --ip accepts
+a single bare address only (no CIDR); the run's scope is exactly that
+address, and domain-only stages (crt.sh, subdomain enumeration, DNS
+wildcard detection) are not run in that mode.
+
+See config/scope.example.yaml (and config/scope.example-ip.yaml) for the
+full set of options the scope file accepts (per-module toggles, rate
+limits, include/exclude patterns, authorization fields). SAFE_ACTIVE and
+OPTIONAL_ACTIVE stages refuse to run without authorization - pass
+--authorized on the simple path, or
 fill in engagement.authorized_by/authorization_reference in the scope file.
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --ip) IP_TARGET="$2"; shift 2 ;;
     --scope-file) SCOPE_FILE="$2"; shift 2 ;;
     --authorized) AUTHORIZED="$2"; shift 2 ;;
     --output-root) OUTPUT_ROOT="$2"; shift 2 ;;
@@ -95,13 +116,32 @@ if (( DO_CONFIRM )); then
   exec $PY confirm --db-path "$DB_PATH" --lead-id "$CONFIRM_LEAD_ID" --by "$CONFIRM_BY" --note "$CONFIRM_NOTE"
 fi
 
-if [[ -z "$DOMAIN" && -z "$SCOPE_FILE" ]]; then
+# Exactly one target source. Counted explicitly rather than guessed, so
+# e.g. `recon.sh 203.0.113.10` (an IP passed as the positional <domain>)
+# is caught here-ish and then definitively rejected by scope-check below
+# (which knows the real validation rules) rather than silently "working".
+TARGET_COUNT=0
+[[ -n "$DOMAIN" ]] && TARGET_COUNT=$((TARGET_COUNT + 1))
+[[ -n "$IP_TARGET" ]] && TARGET_COUNT=$((TARGET_COUNT + 1))
+[[ -n "$SCOPE_FILE" ]] && TARGET_COUNT=$((TARGET_COUNT + 1))
+
+if (( TARGET_COUNT == 0 )); then
   usage; exit 2
+fi
+if (( TARGET_COUNT > 1 )); then
+  echo "Specify exactly one of: <domain>, --ip, or --scope-file - not more than one." >&2
+  exit 2
 fi
 
 SCOPE_ARGS=()
 if [[ -n "$SCOPE_FILE" ]]; then
   SCOPE_ARGS=(--scope-file "$SCOPE_FILE")
+elif [[ -n "$IP_TARGET" ]]; then
+  SCOPE_ARGS=(--ip "$IP_TARGET" --max-hosts "$MAX_HOSTS")
+  [[ -n "$AUTHORIZED" ]] && SCOPE_ARGS+=(--authorized "$AUTHORIZED")
+  (( ENABLE_PORTSCAN )) && SCOPE_ARGS+=(--enable-portscan)
+  (( ENABLE_CONTENT_DISCOVERY )) && SCOPE_ARGS+=(--enable-content-discovery)
+  (( ENABLE_VULN_SCAN )) && SCOPE_ARGS+=(--enable-vuln-scan)
 else
   SCOPE_ARGS=(--domain "$DOMAIN" --max-hosts "$MAX_HOSTS")
   [[ -n "$AUTHORIZED" ]] && SCOPE_ARGS+=(--authorized "$AUTHORIZED")
@@ -110,24 +150,38 @@ else
   (( ENABLE_VULN_SCAN )) && SCOPE_ARGS+=(--enable-vuln-scan)
 fi
 
-# Resolve the domain name for directory layout even in --scope-file mode.
+# Resolve the target for directory layout even in --scope-file mode. This
+# is the authoritative validation step - invalid domain, invalid/CIDR IP,
+# an IP passed as --domain, or a scope.yaml with an ambiguous/ missing
+# target are all rejected here with scope-check's error message.
 SCOPE_JSON="$($PY scope-check "${SCOPE_ARGS[@]}" 2>&1)" || {
   echo "Scope validation failed:" >&2
   echo "$SCOPE_JSON" >&2
   exit 2
 }
-RESOLVED_DOMAIN="$(printf '%s' "$SCOPE_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["domain"])')"
+RESOLVED_TARGET="$(printf '%s' "$SCOPE_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["domain"])')"
+TARGET_TYPE="$(printf '%s' "$SCOPE_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_type"])')"
 IS_AUTHORIZED="$(printf '%s' "$SCOPE_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["authorized"])')"
 
+# IPv6 addresses contain ':', which is awkward (though technically legal)
+# in a directory name - sanitize only the directory name, never the value
+# used for actual scope matching (that's re-derived fresh from SCOPE_ARGS
+# by every Python stage via ipaddress.ip_address(), not from this string).
+DIR_NAME="${RESOLVED_TARGET//:/-}"
+
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
-BASE="${OUTPUT_ROOT%/}/${RESOLVED_DOMAIN}"
+BASE="${OUTPUT_ROOT%/}/${DIR_NAME}"
 RAW="${BASE}/raw/${RUN_ID}"
 DB_PATH="${BASE}/recon.db"
 
 mkdir -p "${BASE}/assets" "${BASE}/endpoints" "${BASE}/findings" "${BASE}/evidence" "$RAW"
 
-printf 'Domain: %s\nRun: %s\nAuthorized: %s\nOutput: %s\n\n' \
-  "$RESOLVED_DOMAIN" "$RUN_ID" "$IS_AUTHORIZED" "$BASE"
+printf 'Target (%s): %s\nRun: %s\nAuthorized: %s\nOutput: %s\n\n' \
+  "$TARGET_TYPE" "$RESOLVED_TARGET" "$RUN_ID" "$IS_AUTHORIZED" "$BASE"
+if [[ "$TARGET_TYPE" == "ip" ]]; then
+  printf 'Scope is exactly this one address - no CIDR, no other IP. crt.sh, subdomain\n'
+  printf 'enumeration and DNS wildcard detection are domain-only and will not run.\n\n'
+fi
 if [[ "$IS_AUTHORIZED" != "True" ]]; then
   printf 'NOTE: no authorization on record. Only PASSIVE stages will produce results;\n'
   printf '      SAFE_ACTIVE/OPTIONAL_ACTIVE stages will record status=not_run.\n\n'

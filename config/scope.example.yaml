@@ -5,6 +5,16 @@
 # content_discovery, vuln_scan) refuse to run if either is empty. Passive
 # stages (crt.sh, subfinder, amass -passive, gau/waybackurls) always run -
 # they only query third-party OSINT sources, never the target.
+#
+# target_type is always explicit - never guessed from the string's shape.
+# This file is domain mode: target_type: domain + a `domain:` value.
+# For a bare-IP scope instead, see config/scope.example-ip.yaml (target_type:
+# ip + an `ip:` value - exactly one address, no CIDR, no hostname; CT-log
+# lookup, subdomain enumeration and DNS wildcard detection don't apply and
+# are not run in that mode). Setting both `domain:` and `ip:`, or omitting
+# the one target_type calls for, is rejected rather than guessed at.
+
+target_type: domain
 
 domain: example.com
 

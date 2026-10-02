@@ -43,6 +43,22 @@ def _extract_names(raw_records, domain: str) -> set:
 
 def run(run_id: str, raw_dir: str, scope, conn, timeout: float = 30.0) -> dict:
     started = util.utc_now_iso()
+
+    if scope.target_type == "ip":
+        # Certificate Transparency is a domain-name technique; there is no
+        # crt.sh query that means anything for a bare IP. Register the
+        # target itself as the (only) in-scope host and stop - no HTTP
+        # request to crt.sh is made at all in this mode.
+        conn.execute(
+            "INSERT OR IGNORE INTO run_hosts(run_id, hostname, source, classification) VALUES (?,?,?,?)",
+            (run_id, scope.domain, "operator-provided", "input"),
+        )
+        db.upsert_host_catalog(conn, scope.domain, scope.domain, True, run_id)
+        db.record_tool_run(conn, run_id, STAGE, TOOL, CLASSIFICATION, started, util.utc_now_iso(),
+                            0, "not_run", "target is an IP address; crt.sh lookup is domain-only "
+                            "and was not run")
+        return {"status": "not_run", "candidates": [scope.domain], "raw_path": None}
+
     raw_path = f"{raw_dir}/crtsh.json"
     status, error, exit_code = "ok", None, 0
 

@@ -1,0 +1,58 @@
+# Copy to scope.yaml and edit. Run with: ./recon.sh --scope-file scope.yaml
+#
+# Single-IP scope. Equivalent to: ./recon.sh --ip 203.0.113.10 --authorized "..."
+# (203.0.113.10 here is a documentation/example address, RFC 5737 TEST-NET-3 -
+# replace it with your actual authorized target before using this file.)
+#
+# The scope engine matches this address exactly (normalized through
+# ipaddress.ip_address, so e.g. compressed vs. expanded IPv6 still
+# compares equal) - never a CIDR range, never a different address, and
+# never a hostname that merely happens to resolve to it. A redirect or
+# CNAME that leaves this single address is recorded as a third-party
+# observation and is never itself probed, crawled, or fuzzed.
+#
+# crt.sh, subdomain enumeration (subfinder/amass) and DNS wildcard
+# detection are domain-only techniques; they do not run for an IP target
+# regardless of the `modules:` section below (reconkit/passive.py,
+# reconkit/subdomains.py and reconkit/dns_validate.py hard-skip them for
+# target_type: ip; the overrides here just keep this file's printed
+# config honest about it).
+
+target_type: ip
+
+ip: "203.0.113.10"
+
+engagement:
+  authorized_by: ""                 # e.g. "Jane Doe, CISO, Example Corp"
+  authorization_reference: ""       # e.g. "Signed ROE 2026-01-01, ref #1234"
+  start_date: ""
+  end_date: ""
+
+# include/exclude/third_party_suffixes are hostname-pattern concepts and
+# are not used in IP mode - the scope engine ignores them here in favor
+# of the exact-address match described above. Left out of this file
+# intentionally, rather than included-but-ignored.
+
+modules:
+  passive: false                # crt.sh - domain-only, forced off for IP targets
+  subdomain_discovery: false    # subfinder/amass - domain-only, forced off
+  dns_validate: false           # resolution + wildcard check - domain-only, forced off
+  http_map: true                 # httpx/curl against this IP            [SAFE_ACTIVE]
+  historical_urls: true         # gau/waybackurls still useful (archives may index this IP) [PASSIVE+SAFE_ACTIVE]
+  crawl: true                   # katana + JS/endpoint analysis          [SAFE_ACTIVE]
+  port_scan: false              # naabu, conservative port list          [OPTIONAL_ACTIVE]
+  content_discovery: false      # ffuf, small built-in wordlist          [OPTIONAL_ACTIVE]
+  vuln_scan: false              # nuclei, safe tags only                 [OPTIONAL_ACTIVE]
+
+rate_limits:
+  http_rps: 10
+  crawl_rps: 5
+  content_discovery_rps: 5
+  portscan_rate: 100
+  nuclei_rate: 10
+
+limits:
+  max_hosts: 1
+  max_urls_per_host_history: 500
+  crawl_depth: 2
+  content_discovery_wordlist_size: 60

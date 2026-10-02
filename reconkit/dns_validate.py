@@ -63,6 +63,17 @@ def _classify(value: str) -> str:
 def run(run_id: str, raw_dir: str, scope, conn, hosts: list, timeout: float = 240.0,
         qps: float = 10.0) -> dict:
     started = util.utc_now_iso()
+
+    if scope.target_type == "ip":
+        # Nothing to resolve (we already have the address) and wildcard-DNS
+        # detection is an apex-domain concept - both are skipped outright,
+        # not just left to resolve to "no answers".
+        db.record_tool_run(conn, run_id, STAGE, "dnsx", CLASSIFICATION, started, util.utc_now_iso(),
+                            0, "not_run", "target is an IP address; DNS resolution and wildcard "
+                            "detection are domain-only and were not run")
+        return {"status": "not_run", "resolved_hosts": [scope.domain], "is_wildcard": False,
+                "record_count": 0}
+
     raw_path = f"{raw_dir}/dnsx.jsonl"
     records = []  # (hostname, type, value)
 
