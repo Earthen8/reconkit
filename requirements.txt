@@ -1,0 +1,3 @@
+# reconkit's Python package uses only the standard library, except for
+# scope.yaml parsing:
+PyYAML>=6.0

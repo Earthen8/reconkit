@@ -1,0 +1,65 @@
+# Copy to scope.yaml and edit. Run with: ./recon.sh --scope-file scope.yaml
+#
+# engagement.authorized_by / authorization_reference are a HARD GATE:
+# SAFE_ACTIVE and OPTIONAL_ACTIVE stages (http_map, crawl, port_scan,
+# content_discovery, vuln_scan) refuse to run if either is empty. Passive
+# stages (crt.sh, subfinder, amass -passive, gau/waybackurls) always run -
+# they only query third-party OSINT sources, never the target.
+
+domain: example.com
+
+engagement:
+  authorized_by: ""                 # e.g. "Jane Doe, CISO, Example Corp"
+  authorization_reference: ""       # e.g. "Signed ROE 2026-01-01, ref #1234" or "HackerOne program handle"
+  start_date: ""
+  end_date: ""
+
+# Hostname patterns that are in scope. "*.example.com" matches any
+# subdomain (not the apex itself - list the apex separately, as below).
+include:
+  - "*.example.com"
+  - "example.com"
+
+# Explicit carve-outs. Checked before include, and before third-party
+# suffixes. Supports the same "*.sub.example.com" wildcard syntax.
+exclude: []
+  # - "payments.example.com"
+  # - "*.staging.example.com"
+
+# Hostnames ending in any of these are NEVER treated as in-scope, even if
+# they look like they belong to the target (common when a target uses a
+# CDN/SaaS front-end). Extends - does not replace - the tool's built-in
+# default list (AWS, Cloudfront, Akamai, Fastly, Azure, Heroku, GitHub
+# Pages, Google App Engine, Cloudflare, Shopify, Zendesk, etc).
+third_party_suffixes: []
+  # - "example-cdn-partner.net"
+
+# Stage toggles. PASSIVE stages are safe to leave on. SAFE_ACTIVE sends
+# ordinary GET-request-level traffic to in-scope hosts you've authorized.
+# OPTIONAL_ACTIVE (port_scan, content_discovery, vuln_scan) is off by
+# default - turn on deliberately, one at a time, after reviewing rate
+# limits below.
+modules:
+  passive: true                # crt.sh                         [PASSIVE]
+  subdomain_discovery: true    # subfinder, amass -passive       [PASSIVE]
+  dns_validate: true           # dnsx/dig + wildcard detection   [PASSIVE]
+  http_map: true                # httpx/curl HTTP(S) mapping     [SAFE_ACTIVE]
+  historical_urls: true        # gau/waybackurls + liveness check [PASSIVE + SAFE_ACTIVE]
+  crawl: true                  # katana + JS/endpoint analysis   [SAFE_ACTIVE]
+  port_scan: false             # naabu, conservative port list   [OPTIONAL_ACTIVE]
+  content_discovery: false     # ffuf, small built-in wordlist   [OPTIONAL_ACTIVE]
+  vuln_scan: false             # nuclei, safe tags only          [OPTIONAL_ACTIVE]
+
+rate_limits:
+  dns_qps: 10
+  http_rps: 10
+  crawl_rps: 5
+  content_discovery_rps: 5
+  portscan_rate: 100
+  nuclei_rate: 10
+
+limits:
+  max_hosts: 1000                      # cap on candidate hostnames carried into active stages
+  max_urls_per_host_history: 500       # cap on historical URLs liveness-checked per host
+  crawl_depth: 2
+  content_discovery_wordlist_size: 60
