@@ -50,9 +50,10 @@ def _katana_crawl(seed_urls: list, raw_path: str, scope: "scope_mod.Scope", time
         fh.write("\n".join(seed_urls) + "\n")
     depth = int(scope.limits.get("crawl_depth", 2))
     rps = max(1, int(scope.rate_limits.get("crawl_rps", 5)))
+    scope_regex = rf"{re.escape(scope.domain)}|sso.*login"
     result = util.run_cmd(
         [exe, "-silent", "-jsonl", "-list", list_path, "-depth", str(depth),
-         "-rate-limit", str(rps), "-no-scope", "-field-scope", "fqdn",
+         "-rate-limit", str(rps), "-cs", scope_regex,
          "-o", raw_path],
         timeout=timeout,
     )
