@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import json
 import re
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
-from . import db, util
+from . import db, scope as scope_mod, util
 
 STAGE = "http_map"
 CLASSIFICATION = "SAFE_ACTIVE"
@@ -42,7 +42,7 @@ def _httpx_bulk(hosts: list, raw_path: str, timeout: float, rps: float) -> dict:
     rate = max(1, int(rps))
     result = util.run_cmd(
         [exe, "-silent", "-json", "-l", list_path, "-status-code", "-title",
-         "-content-type", "-content-length", "-follow-redirects", "-location",
+         "-content-type", "-content-length", "-location",
          "-tech-detect", "-tls-grab", "-rate-limit", str(rate), "-o", raw_path],
         timeout=timeout,
     )
@@ -67,7 +67,7 @@ def _curl_fallback(hosts: list, raw_dir: str, timeout_per_host: float, rps: floa
             result = util.run_cmd(
                 [curl, "-sS", "-m", str(int(timeout_per_host)), "-D", "-", "-o", "/tmp/_body",
                  "-w", "\n__STATUS__:%{http_code}\n__FINAL_URL__:%{url_effective}\n",
-                 "-L", "--max-redirs", "5", url],
+                 url],
                 timeout=timeout_per_host + 5,
             )
             if result.timed_out or not result.stdout:
@@ -76,6 +76,7 @@ def _curl_fallback(hosts: list, raw_dir: str, timeout_per_host: float, rps: floa
             final_match = re.search(r"__FINAL_URL__:(\S+)", result.stdout)
             if not status_match:
                 continue
+            redirect_location = None
             body = ""
             try:
                 with open("/tmp/_body", encoding="utf-8", errors="replace") as fh:
@@ -88,12 +89,15 @@ def _curl_fallback(hosts: list, raw_dir: str, timeout_per_host: float, rps: floa
                 if ":" in line:
                     k, _, v = line.partition(":")
                     k = k.strip().lower()
+                    if k == "location":
+                        redirect_location = v.strip()
                     if k in ALLOWED_HEADERS:
                         headers[k] = v.strip()
             rows.append({
                 "url": url,
                 "status_code": int(status_match.group(1)),
                 "final_url": final_match.group(1) if final_match else url,
+                "location": redirect_location,
                 "title": title_match.group(1).strip()[:300] if title_match else "",
                 "content_length": len(body),
                 "headers": headers,
@@ -105,6 +109,18 @@ def _curl_fallback(hosts: list, raw_dir: str, timeout_per_host: float, rps: floa
 
 def run(run_id: str, raw_dir: str, scope, conn, hosts: list, timeout: float = 300.0) -> dict:
     started = util.utc_now_iso()
+
+    if not scope.module_enabled("http_map"):
+        db.record_tool_run(conn, run_id, STAGE, "httpx", CLASSIFICATION, started,
+                            util.utc_now_iso(), 0, "not_run", "disabled in scope config")
+        return {"status": "not_run"}
+
+    auth_error = scope_mod.require_authorization_or_die(scope, STAGE)
+    if auth_error:
+        db.record_tool_run(conn, run_id, STAGE, "httpx", CLASSIFICATION, started,
+                            util.utc_now_iso(), 0, "not_run", auth_error)
+        return {"status": "not_run", "error": auth_error}
+
     in_scope_hosts = sorted({h for h in hosts if scope.is_in_scope(h)})
     rps = scope.rate_limits.get("http_rps", 10)
 
@@ -123,13 +139,25 @@ def run(run_id: str, raw_dir: str, scope, conn, hosts: list, timeout: float = 30
         final_url = row.get("final_url") or row.get("final-url") or url
         final_host = urlparse(final_url).hostname or host
         final_in_scope = scope.is_in_scope(final_host)
+        location = row.get("location")
+        if isinstance(location, list):
+            location = location[-1] if location else None
+        redirect_url = urljoin(url, str(location)) if location else ""
+        redirect_host = urlparse(redirect_url).hostname or ""
 
-        if not final_in_scope and final_host and final_host != host:
+        if redirect_host and not scope.is_in_scope(redirect_host):
+            conn.execute(
+                "INSERT INTO third_party_observations(run_id, hostname, points_to, relationship, "
+                "note, observed_at) VALUES (?,?,?,?,?,?)",
+                (run_id, host, redirect_host, "redirect",
+                 "HTTP redirect leaves scope; destination was not followed or probed", observed_at),
+            )
+        elif not final_in_scope and final_host and final_host != host:
             conn.execute(
                 "INSERT INTO third_party_observations(run_id, hostname, points_to, relationship, "
                 "note, observed_at) VALUES (?,?,?,?,?,?)",
                 (run_id, host, final_host, "redirect",
-                 "HTTP redirect leaves scope; destination not probed/crawled", observed_at),
+                 "HTTP response points outside scope; destination was not probed/crawled", observed_at),
             )
 
         tech = []

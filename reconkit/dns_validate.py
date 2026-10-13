@@ -64,6 +64,12 @@ def run(run_id: str, raw_dir: str, scope, conn, hosts: list, timeout: float = 24
         qps: float = 10.0) -> dict:
     started = util.utc_now_iso()
 
+    if not scope.module_enabled("dns_validate"):
+        db.record_tool_run(conn, run_id, STAGE, "dnsx", CLASSIFICATION, started,
+                            util.utc_now_iso(), 0, "not_run", "disabled in scope config")
+        return {"status": "not_run", "resolved_hosts": [], "is_wildcard": False,
+                "record_count": 0}
+
     if scope.target_type == "ip":
         # Nothing to resolve (we already have the address) and wildcard-DNS
         # detection is an apex-domain concept - both are skipped outright,

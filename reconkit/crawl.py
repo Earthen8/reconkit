@@ -50,10 +50,20 @@ def _katana_crawl(seed_urls: list, raw_path: str, scope: "scope_mod.Scope", time
         fh.write("\n".join(seed_urls) + "\n")
     depth = int(scope.limits.get("crawl_depth", 2))
     rps = max(1, int(scope.rate_limits.get("crawl_rps", 5)))
-    scope_regex = rf"{re.escape(scope.domain)}|sso.*login"
+    allowed_hosts = sorted({
+        urlparse(url).hostname.lower()
+        for url in seed_urls
+        if urlparse(url).hostname and scope.is_in_scope(urlparse(url).hostname)
+    })
+    if not allowed_hosts:
+        return {"status": "nothing_found", "urls": []}
+    host_regex = "|".join(
+        re.escape(f"[{host}]" if ":" in host else host) for host in allowed_hosts
+    )
+    scope_regex = rf"^https?://(?:{host_regex})(?::\d+)?(?:/|$)"
     result = util.run_cmd(
         [exe, "-silent", "-jsonl", "-list", list_path, "-depth", str(depth),
-         "-rate-limit", str(rps), "-cs", scope_regex,
+         "-rate-limit", str(rps), "-cs", scope_regex, "-dr",
          "-o", raw_path],
         timeout=timeout,
     )
@@ -101,6 +111,11 @@ def _fetch_js(js_url: str, timeout: float = 10.0) -> str:
 def run(run_id: str, raw_dir: str, scope: "scope_mod.Scope", conn, seed_urls: list,
         timeout: float = 300.0) -> dict:
     started = util.utc_now_iso()
+
+    if not scope.module_enabled("crawl"):
+        db.record_tool_run(conn, run_id, STAGE, "katana", CLASSIFICATION, started,
+                            util.utc_now_iso(), 0, "not_run", "disabled in scope config")
+        return {"status": "not_run"}
 
     auth_error = scope_mod.require_authorization_or_die(scope, STAGE)
     if auth_error:

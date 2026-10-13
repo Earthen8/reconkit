@@ -59,6 +59,11 @@ def run(run_id: str, raw_dir: str, scope, conn, timeout: float = 30.0) -> dict:
                             "and was not run")
         return {"status": "not_run", "candidates": [scope.domain], "raw_path": None}
 
+    if not scope.module_enabled("passive"):
+        db.record_tool_run(conn, run_id, STAGE, TOOL, CLASSIFICATION, started,
+                            util.utc_now_iso(), 0, "not_run", "disabled in scope config")
+        return {"status": "not_run", "candidates": [], "raw_path": None}
+
     raw_path = f"{raw_dir}/crtsh.json"
     status, error, exit_code = "ok", None, 0
 

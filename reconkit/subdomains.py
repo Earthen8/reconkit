@@ -71,6 +71,12 @@ def _file_has_content(path: str) -> bool:
 
 def run(run_id: str, raw_dir: str, scope, conn, timeout_subfinder: float = 120.0,
         timeout_amass: float = 180.0) -> dict:
+    if not scope.module_enabled("subdomain_discovery"):
+        for tool in ("subfinder", "amass"):
+            db.record_tool_run(conn, run_id, STAGE, tool, CLASSIFICATION, util.utc_now_iso(),
+                                util.utc_now_iso(), 0, "not_run", "disabled in scope config")
+        return {"candidates": []}
+
     if scope.target_type == "ip":
         # subfinder/amass enumerate subdomains of a *name* - meaningless for
         # a bare IP target. Neither tool is invoked in this mode.

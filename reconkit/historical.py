@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-from . import db, http_map, util
+from . import db, http_map, scope as scope_mod, util
 
 STAGE = "historical"
 CLASSIFICATION_PASSIVE = "PASSIVE"
@@ -34,6 +34,16 @@ def _run_tool(tool: str, domain: str, raw_path: str, timeout: float) -> tuple:
 
 
 def run(run_id: str, raw_dir: str, scope, conn, timeout: float = 180.0) -> dict:
+    if not scope.module_enabled("historical_urls"):
+        started = util.utc_now_iso()
+        for tool, classification in (("gau", CLASSIFICATION_PASSIVE),
+                                     ("waybackurls", CLASSIFICATION_PASSIVE),
+                                     ("httpx", CLASSIFICATION_ACTIVE)):
+            db.record_tool_run(conn, run_id, STAGE, tool, classification, started,
+                                util.utc_now_iso(), 0, "not_run", "disabled in scope config")
+        return {"status": "not_run", "total_historical": 0, "liveness_checked": 0,
+                "currently_reachable": 0}
+
     all_urls: set = set()
     for tool in ("gau", "waybackurls"):
         started = util.utc_now_iso()
@@ -71,7 +81,9 @@ def run(run_id: str, raw_dir: str, scope, conn, timeout: float = 180.0) -> dict:
     raw_path = f"{raw_dir}/historical_liveness.jsonl"
     exe = util.which("httpx")
     reachable = {}
-    if exe and sample:
+    auth_error = scope_mod.require_authorization_or_die(scope, STAGE)
+    liveness_checked = 0
+    if not auth_error and exe and sample:
         list_path = raw_path.replace(".jsonl", ".urls.txt")
         with open(list_path, "w", encoding="utf-8") as fh:
             fh.write("\n".join(sample) + "\n")
@@ -81,21 +93,42 @@ def run(run_id: str, raw_dir: str, scope, conn, timeout: float = 180.0) -> dict:
              "-rate-limit", str(rate), "-o", raw_path],
             timeout=timeout,
         )
+        liveness_checked = len(sample)
         for row in util.read_jsonl(raw_path):
             u = row.get("url") or row.get("input")
             if u:
                 reachable[u] = row.get("status_code")
+        if result.timed_out:
+            status, error, exit_code = "timed_out", "httpx exceeded timeout", None
+        elif result.returncode not in (0, None):
+            status, error, exit_code = "failed", (result.stderr or "httpx returned non-zero exit")[:500], result.returncode
+        else:
+            status, error, exit_code = ("ok" if reachable else "nothing_found"), None, 0
+        db.record_tool_run(conn, run_id, STAGE, "httpx", CLASSIFICATION_ACTIVE,
+                            util.utc_now_iso(), util.utc_now_iso(),
+                            exit_code, status, error,
+                            item_count=len(reachable))
+        if status not in ("ok", "nothing_found"):
+            liveness_checked = 0
+    else:
+        status = "not_run" if auth_error else ("unavailable" if not exe else "nothing_found")
+        reason = auth_error or ("httpx not found on PATH" if not exe else "no in-scope URLs")
+        db.record_tool_run(conn, run_id, STAGE, "httpx", CLASSIFICATION_ACTIVE,
+                            util.utc_now_iso(), util.utc_now_iso(), 0, status, reason)
 
-    for url, host in in_scope_urls:
-        status_code = reachable.get(url)
-        conn.execute(
-            "UPDATE historical_urls SET currently_reachable=?, status_code=? "
-            "WHERE run_id=? AND url=? AND source='gau/waybackurls'",
-            (int(url in reachable), status_code, run_id, url),
-        )
+    if liveness_checked:
+        sampled_urls = set(sample)
+        for url, host in in_scope_urls:
+            if url not in sampled_urls:
+                continue
+            conn.execute(
+                "UPDATE historical_urls SET currently_reachable=?, status_code=? "
+                "WHERE run_id=? AND url=? AND source='gau/waybackurls'",
+                (int(url in reachable), reachable.get(url), run_id, url),
+            )
 
     return {
         "total_historical": len(in_scope_urls),
-        "liveness_checked": len(sample),
+        "liveness_checked": liveness_checked,
         "currently_reachable": len(reachable),
     }

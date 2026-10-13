@@ -93,6 +93,12 @@ authorization (`--authorized` or `engagement.authorized_by` +
 `authorization_reference` in scope.yaml) - they record
 `status=not_run` with a reason instead of silently skipping.
 
+HTTP mapping and historical-URL liveness checks do not follow redirects.
+The crawler is restricted to the exact in-scope seed hostnames and has
+redirect following disabled, so an off-scope redirect or link is not
+requested. Module switches are enforced by their stages before invoking
+the corresponding tools.
+
 Missing tools, timeouts, and non-zero exits never stop the pipeline;
 `tool_runs` in `recon.db` records `ok | nothing_found | not_run |
 failed | timed_out | unavailable` for every (stage, tool) pair, and
