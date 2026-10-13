@@ -2,8 +2,8 @@
 # reconkit orchestrator.
 #
 #   ./recon.sh example.com
-#   ./recon.sh example.com --authorized "Jane Doe, signed ROE 2026-01-01" --enable-vuln-scan
-#   ./recon.sh --ip 203.0.113.10 --authorized "Jane Doe, signed ROE 2026-01-01"
+#   ./recon.sh example.com --authorized --enable-vuln-scan
+#   ./recon.sh --ip 203.0.113.10 --authorized
 #   ./recon.sh --scope-file config/scope.yaml
 #   ./recon.sh --check
 #   ./recon.sh --confirm 42 --by "jane.doe" --note "manually verified, see evidence/lead-42.png"
@@ -39,7 +39,7 @@ DOMAIN=""
 IP_TARGET=""
 SCOPE_FILE=""
 OUTPUT_ROOT="recon"
-AUTHORIZED=""
+AUTHORIZED=0
 MAX_HOSTS="1000"
 ENABLE_PORTSCAN=0
 ENABLE_CONTENT_DISCOVERY=0
@@ -53,9 +53,9 @@ CONFIRM_NOTE=""
 usage() {
   cat >&2 <<'EOF'
 Usage:
-  recon.sh <domain> [--authorized "text"] [--output-root DIR] [--max-hosts N]
+  recon.sh <domain> [--authorized] [--output-root DIR] [--max-hosts N]
            [--enable-portscan] [--enable-content-discovery] [--enable-vuln-scan]
-  recon.sh --ip <address> [--authorized "text"] [--output-root DIR]
+  recon.sh --ip <address> [--authorized] [--output-root DIR]
            [--enable-portscan] [--enable-content-discovery] [--enable-vuln-scan]
   recon.sh --scope-file config/scope.yaml [--output-root DIR]
   recon.sh --check
@@ -74,6 +74,8 @@ limits, include/exclude patterns, authorization fields). SAFE_ACTIVE and
 OPTIONAL_ACTIVE stages refuse to run without authorization - pass
 --authorized on the simple path, or
 fill in engagement.authorized_by/authorization_reference in the scope file.
+The --authorized flag is an operator assertion; it does not verify
+authorization independently.
 EOF
 }
 
@@ -81,7 +83,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --ip) IP_TARGET="$2"; shift 2 ;;
     --scope-file) SCOPE_FILE="$2"; shift 2 ;;
-    --authorized) AUTHORIZED="$2"; shift 2 ;;
+    --authorized) AUTHORIZED=1; shift ;;
     --output-root) OUTPUT_ROOT="$2"; shift 2 ;;
     --max-hosts) MAX_HOSTS="$2"; shift 2 ;;
     --enable-portscan) ENABLE_PORTSCAN=1; shift ;;
@@ -138,13 +140,13 @@ if [[ -n "$SCOPE_FILE" ]]; then
   SCOPE_ARGS=(--scope-file "$SCOPE_FILE")
 elif [[ -n "$IP_TARGET" ]]; then
   SCOPE_ARGS=(--ip "$IP_TARGET" --max-hosts "$MAX_HOSTS")
-  [[ -n "$AUTHORIZED" ]] && SCOPE_ARGS+=(--authorized "$AUTHORIZED")
+  (( AUTHORIZED )) && SCOPE_ARGS+=(--authorized)
   (( ENABLE_PORTSCAN )) && SCOPE_ARGS+=(--enable-portscan)
   (( ENABLE_CONTENT_DISCOVERY )) && SCOPE_ARGS+=(--enable-content-discovery)
   (( ENABLE_VULN_SCAN )) && SCOPE_ARGS+=(--enable-vuln-scan)
 else
   SCOPE_ARGS=(--domain "$DOMAIN" --max-hosts "$MAX_HOSTS")
-  [[ -n "$AUTHORIZED" ]] && SCOPE_ARGS+=(--authorized "$AUTHORIZED")
+  (( AUTHORIZED )) && SCOPE_ARGS+=(--authorized)
   (( ENABLE_PORTSCAN )) && SCOPE_ARGS+=(--enable-portscan)
   (( ENABLE_CONTENT_DISCOVERY )) && SCOPE_ARGS+=(--enable-content-discovery)
   (( ENABLE_VULN_SCAN )) && SCOPE_ARGS+=(--enable-vuln-scan)

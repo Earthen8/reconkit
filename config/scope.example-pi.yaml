@@ -1,6 +1,6 @@
 # Copy to scope.yaml and edit. Run with: ./recon.sh --scope-file scope.yaml
 #
-# Single-IP scope. Equivalent to: ./recon.sh --ip 203.0.113.10 --authorized "..."
+# Single-IP scope. Equivalent to: ./recon.sh --ip 203.0.113.10 --authorized
 # (203.0.113.10 here is a documentation/example address, RFC 5737 TEST-NET-3 -
 # replace it with your actual authorized target before using this file.)
 #

@@ -169,26 +169,27 @@ def _active_module_overrides(enable_portscan: bool, enable_content_discovery: bo
     return modules
 
 
-def from_simple_domain(domain: str, authorized_text: Optional[str], enable_portscan: bool,
+def from_simple_domain(domain: str, authorized: bool, enable_portscan: bool,
                         enable_content_discovery: bool, enable_vuln_scan: bool,
                         max_hosts: int) -> Scope:
     domain = domain.strip().lower().rstrip(".")
     modules = _active_module_overrides(enable_portscan, enable_content_discovery, enable_vuln_scan)
     limits = dict(DEFAULT_LIMITS)
     limits["max_hosts"] = max_hosts
-    authorized_by = authorized_text.strip() if authorized_text else None
+    authorized_by = "CLI operator assertion" if authorized else None
     return Scope(
         domain=domain,
         target_type="domain",
         include=[f"*.{domain}", domain],
         authorized_by=authorized_by,
-        authorization_reference=("CLI --authorized flag" if authorized_by else None),
+        authorization_reference=("Authorization asserted with --authorized; not independently verified"
+                                 if authorized else None),
         modules=modules,
         limits=limits,
     )
 
 
-def from_simple_ip(ip: str, authorized_text: Optional[str], enable_portscan: bool,
+def from_simple_ip(ip: str, authorized: bool, enable_portscan: bool,
                     enable_content_discovery: bool, enable_vuln_scan: bool,
                     max_hosts: int) -> Scope:
     """Single-IP scope. subdomain_discovery/passive(CT)/dns_validate are
@@ -203,7 +204,7 @@ def from_simple_ip(ip: str, authorized_text: Optional[str], enable_portscan: boo
     modules["dns_validate"] = False
     limits = dict(DEFAULT_LIMITS)
     limits["max_hosts"] = max_hosts
-    authorized_by = authorized_text.strip() if authorized_text else None
+    authorized_by = "CLI operator assertion" if authorized else None
     return Scope(
         domain=normalized,
         target_type="ip",
@@ -211,7 +212,8 @@ def from_simple_ip(ip: str, authorized_text: Optional[str], enable_portscan: boo
         exclude=[],
         third_party_suffixes=[],  # suffix matching is a hostname concept; not applicable to a bare IP
         authorized_by=authorized_by,
-        authorization_reference=("CLI --authorized flag" if authorized_by else None),
+        authorization_reference=("Authorization asserted with --authorized; not independently verified"
+                                 if authorized else None),
         modules=modules,
         limits=limits,
     )
@@ -311,6 +313,6 @@ def require_authorization_or_die(scope: Scope, stage: str) -> Optional[str]:
         return (
             f"Refusing to run '{stage}': no authorization on record. Set "
             f"engagement.authorized_by / engagement.authorization_reference in "
-            f"scope.yaml, or pass --authorized \"<text>\" on the simple CLI path."
+            f"scope.yaml, or pass --authorized on the simple CLI path."
         )
     return None

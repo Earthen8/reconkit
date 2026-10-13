@@ -13,7 +13,7 @@ is the canonical, cross-run correlation layer.
 ```bash
 ./install.sh --yes          # Kali: apt + go-install the underlying tools
 ./recon.sh --check          # verify what's on PATH
-./recon.sh example.com --authorized "Jane Doe, signed ROE 2026-01-01"
+./recon.sh example.com --authorized
 ```
 
 Or with a full scope file (see `config/scope.example.yaml`):
@@ -30,7 +30,7 @@ string. Pass `--ip` instead of a domain to scope a run to exactly one
 IPv4/IPv6 address:
 
 ```bash
-./recon.sh --ip 203.0.113.10 --authorized "Jane Doe, signed ROE 2026-01-01"
+./recon.sh --ip 203.0.113.10 --authorized
 # or: cp config/scope.example-ip.yaml scope.yaml  (edit ip/engagement) && ./recon.sh --scope-file scope.yaml
 ```
 
@@ -92,6 +92,9 @@ SAFE_ACTIVE/OPTIONAL_ACTIVE stages refuse to run without recorded
 authorization (`--authorized` or `engagement.authorized_by` +
 `authorization_reference` in scope.yaml) - they record
 `status=not_run` with a reason instead of silently skipping.
+On the simple CLI path, `--authorized` takes no value: it is the
+operator's assertion that the engagement is authorized, not an
+independent verification. The assertion is recorded in `recon.db`.
 
 HTTP mapping and historical-URL liveness checks do not follow redirects.
 The crawler is restricted to the exact in-scope seed hostnames and has

@@ -1,10 +1,13 @@
+import argparse
+import contextlib
+import io
 import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from reconkit import crawl, db, dns_validate, historical, http_map, passive, subdomains, util
+from reconkit import cli, crawl, db, dns_validate, historical, http_map, passive, subdomains, util
 from reconkit.scope import Scope
 
 
@@ -17,6 +20,27 @@ class NetworkGateTests(unittest.TestCase):
 
     def tearDown(self):
         self.conn.close()
+
+    def test_authorized_flag_takes_no_text_argument(self):
+        parser = argparse.ArgumentParser()
+        cli._add_scope_args(parser)
+
+        args = parser.parse_args(["--domain", "example.com", "--authorized"])
+        scope = cli._build_scope(args)
+        self.assertTrue(scope.is_authorized)
+        self.assertEqual(scope.authorized_by, "CLI operator assertion")
+        self.assertIn("not independently verified", scope.authorization_reference)
+
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            parser.parse_args(["--domain", "example.com", "--authorized", "operator name"])
+
+    def test_authorization_flag_omitted_keeps_active_stages_gated(self):
+        parser = argparse.ArgumentParser()
+        cli._add_scope_args(parser)
+
+        args = parser.parse_args(["--domain", "example.com"])
+        scope = cli._build_scope(args)
+        self.assertFalse(scope.is_authorized)
 
     def test_http_map_requires_authorization_before_probing(self):
         with patch("reconkit.http_map._httpx_bulk") as probe:

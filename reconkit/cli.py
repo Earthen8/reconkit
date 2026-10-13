@@ -26,7 +26,8 @@ def _add_scope_args(p: argparse.ArgumentParser) -> None:
     g.add_argument("--domain", help="Hostname target, e.g. example.com")
     g.add_argument("--ip", help="Bare IPv4/IPv6 address target, e.g. 203.0.113.10 (no CIDR)")
     g.add_argument("--scope-file")
-    p.add_argument("--authorized", default=None, help="Free-text authorization note (simple-target mode)")
+    p.add_argument("--authorized", action="store_true",
+                   help="Assert that active testing is authorized (simple-target mode)")
     p.add_argument("--enable-portscan", action="store_true")
     p.add_argument("--enable-content-discovery", action="store_true")
     p.add_argument("--enable-vuln-scan", action="store_true")
